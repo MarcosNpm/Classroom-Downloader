@@ -46,6 +46,38 @@ def http_error(status: int, message: str = "error", retry_after: str | None = No
     return HttpError(FakeResp(status, retry_after), content)
 
 
+def test_course_fields_use_course_state():
+    from classroom_dl.api import COURSE_FIELDS
+
+    assert "courseState" in COURSE_FIELDS
+    assert "courses.state" not in COURSE_FIELDS
+
+
+def test_material_fields_use_singular_resource_name():
+    from classroom_dl.api import MATERIAL_FIELDS
+
+    assert "courseWorkMaterial(" in MATERIAL_FIELDS
+    assert "courseWorkMaterials(" not in MATERIAL_FIELDS
+
+
+def test_submission_attachments_reads_nested_object():
+    from classroom_dl.api import _submission_attachments
+
+    files, links = _submission_attachments(
+        {
+            "assignmentSubmission": {
+                "attachments": [
+                    {"driveFile": {"id": "f1", "title": "entrega.zip"}},
+                    {"link": {"title": "Repo", "url": "https://github.com/x"}},
+                ]
+            }
+        }
+    )
+    assert [f.file_id for f in files] == ["f1"]
+    assert [link.url for link in links] == ["https://github.com/x"]
+    assert _submission_attachments({}) == ((), ())
+
+
 def test_parse_kinds_aliases():
     assert parse_kinds("materiales,tareas") == ("materials", "coursework")
     assert parse_kinds("ALL") == ("materials", "announcements", "coursework", "submissions")
@@ -59,13 +91,26 @@ def test_parse_materials_extracts_files_and_links():
     files, links = _parse_materials(
         [
             {"driveFile": {"id": "f1", "title": "guia.pdf", "alternateLink": "http://x"}},
+            {
+                "driveFile": {
+                    "driveFile": {
+                        "id": "f2",
+                        "title": "apunte.pdf",
+                        "alternateLink": "http://y",
+                    },
+                    "shareMode": "VIEW",
+                }
+            },
             {"youTubeVideo": {"title": "Video", "alternateLink": "http://yt"}},
             {"link": {"title": "Web", "url": "http://web"}},
             {"form": {"title": "Form", "formUrl": "http://form"}},
             {},
         ]
     )
-    assert files == (DriveAttachment("f1", "guia.pdf", url="http://x"),)
+    assert files == (
+        DriveAttachment("f1", "guia.pdf", url="http://x"),
+        DriveAttachment("f2", "apunte.pdf", url="http://y"),
+    )
     assert [link.url for link in links] == ["http://yt", "http://web", "http://form"]
 
 

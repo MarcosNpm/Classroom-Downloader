@@ -42,15 +42,15 @@ KIND_ALIASES = {
     "entrega": ("submissions",),
 }
 
-COURSE_ITEM_FIELDS = "id,name,section,state,room,ownerId,alternateLink"
+COURSE_ITEM_FIELDS = "id,name,section,courseState,room,ownerId,alternateLink"
 COURSE_FIELDS = f"nextPageToken,courses({COURSE_ITEM_FIELDS})"
 MATERIAL_FIELDS = (
-    "nextPageToken,courseWorkMaterials("
+    "nextPageToken,courseWorkMaterial("
     "id,title,description,state,creationTime,updateTime,materials,topicId,alternateLink)"
 )
 ANNOUNCEMENT_FIELDS = (
     "nextPageToken,announcements("
-    "id,text,state,creationTime,updateTime,materials,topicId,alternateLink)"
+    "id,text,state,creationTime,updateTime,materials,alternateLink)"
 )
 COURSEWORK_FIELDS = (
     "nextPageToken,courseWork("
@@ -59,7 +59,8 @@ COURSEWORK_FIELDS = (
 )
 SUBMISSION_FIELDS = (
     "nextPageToken,studentSubmissions("
-    "id,courseWorkId,state,updateTime,assignedGrade,draftGrade,attachments)"
+    "id,courseWorkId,state,updateTime,assignedGrade,draftGrade,"
+    "assignmentSubmission(attachments))"
 )
 
 _RETRY_STATUS = {429, 500, 502, 503, 504}
@@ -210,6 +211,21 @@ def _parse_date(*values: str | None) -> dt.date | None:
     return None
 
 
+def _drive_file_payload(material: dict) -> dict | None:
+    """Devuelve el objeto con id/título de un adjunto de Drive.
+
+    La API actual anida el archivo en ``driveFile.driveFile`` (con ``shareMode``
+    al lado). Las entregas siguen usando ``driveFile`` plano.
+    """
+    drive = material.get("driveFile")
+    if not isinstance(drive, dict):
+        return None
+    inner = drive.get("driveFile")
+    if isinstance(inner, dict):
+        return inner
+    return drive
+
+
 def _parse_materials(
     materials: Iterable[dict] | None,
 ) -> tuple[tuple[DriveAttachment, ...], tuple[LinkAttachment, ...]]:
@@ -218,7 +234,7 @@ def _parse_materials(
     for material in materials or []:
         if not isinstance(material, dict):
             continue
-        drive = material.get("driveFile")
+        drive = _drive_file_payload(material)
         if isinstance(drive, dict) and drive.get("id"):
             files.append(
                 DriveAttachment(
@@ -250,6 +266,16 @@ def _parse_materials(
                 )
             )
     return tuple(files), tuple(links)
+
+
+def _submission_attachments(
+    raw: dict,
+) -> tuple[tuple[DriveAttachment, ...], tuple[LinkAttachment, ...]]:
+    """Los adjuntos de una entrega viven en assignmentSubmission.attachments."""
+    submission = raw.get("assignmentSubmission")
+    if not isinstance(submission, dict):
+        return (), ()
+    return _parse_materials(submission.get("attachments"))
 
 
 def _announcement_title(text: str) -> str:
@@ -291,7 +317,7 @@ class ClassroomClient:
                 )
 
             for raw in _paginate(request_factory, "courses"):
-                state = raw.get("state")
+                state = raw.get("courseState")
                 if not include_archived and state == "ARCHIVED":
                     continue
                 course = Course(
@@ -329,7 +355,7 @@ class ClassroomClient:
             id=str(raw.get("id", course_id)),
             name=str(raw.get("name") or course_id),
             section=raw.get("section") or None,
-            state=raw.get("state"),
+            state=raw.get("courseState"),
             room=raw.get("room") or None,
         )
 
@@ -385,7 +411,7 @@ class ClassroomClient:
                 )
             )
 
-        for raw in _paginate(request_factory, "courseWorkMaterials"):
+        for raw in _paginate(request_factory, "courseWorkMaterial"):
             files, links = _parse_materials(raw.get("materials"))
             yield Item(
                 kind="materials",
@@ -477,7 +503,7 @@ class ClassroomClient:
             for key in ("assignedGrade", "draftGrade"):
                 if isinstance(raw.get(key), (int, float)):
                     grades.append(f"{key}={raw[key]:g}")
-            sub_files, sub_links = _parse_materials(raw.get("attachments"))
+            sub_files, sub_links = _submission_attachments(raw)
             files.extend(sub_files)
             links.extend(sub_links)
         if not files and not links:

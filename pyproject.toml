@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "classroom-dl"
+version = "0.1.0"
+description = "Descarga materiales, tareas y entregas de Google Classroom desde la terminal"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Markus" }]
+keywords = ["google-classroom", "cli", "drive", "download"]
+dependencies = [
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.23.0",
+    "google-auth-httplib2>=0.1.1",
+    "google-auth-oauthlib>=1.1.0",
+    "platformdirs>=4.0.0",
+    "questionary>=2.0.0",
+    "rich>=13.7.0",
+    "typer>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+classroom-dl = "classroom_dl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["classroom_dl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer se define mediante llamadas en los valores por defecto.
+"classroom_dl/cli.py" = ["B008"]

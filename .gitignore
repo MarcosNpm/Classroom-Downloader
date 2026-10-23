@@ -1,0 +1,22 @@
+# Credenciales y tokens: NUNCA subir esto
+client_secret.json
+token.json
+*.token.json
+.env
+
+# Entorno
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Herramientas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Salida de la app
+Classroom/

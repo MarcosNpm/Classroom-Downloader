@@ -20,7 +20,7 @@ CLI en Python para **descargar desde la terminal** los materiales, anuncios, tar
 ## 2. Instalación
 
 ```bash
-cd /home/Markus/proyecto_class
+cd /home/nickname/carpeta-destino
 
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -32,7 +32,7 @@ python3 -m venv .venv
 Si quieres usarlo desde cualquier carpeta sin activar el venv, crea un alias:
 
 ```bash
-echo 'alias classroom-dl="/home/Markus/proyecto_class/.venv/bin/classroom-dl"' >> ~/.bashrc
+echo 'alias classroom-dl="/home/name/carpeta-destino/.venv/bin/classroom-dl"' >> ~/.bashrc
 source ~/.bashrc
 ```
 

@@ -95,15 +95,35 @@ def load_credentials(
 
     client_secret = credentials_path(client_secret)
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), SCOPES)
-    creds = flow.run_local_server(
-        port=0,
-        open_browser=True,
-        prompt="consent",
-        authorization_prompt_message="Abre este enlace para autorizar classroom-dl:\n{url}",
-        success_message="Autorización completada. Ya puedes cerrar esta pestaña.",
-    )
+    try:
+        creds = flow.run_local_server(
+            port=0,
+            open_browser=True,
+            prompt="consent",
+            authorization_prompt_message="Abre este enlace para autorizar classroom-dl:\n{url}",
+            success_message="Autorización completada. Ya puedes cerrar esta pestaña.",
+        )
+    except Warning as exc:
+        # oauthlib lanza un Warning si Google concede menos scopes de los pedidos.
+        old = list(getattr(exc, "old_scope", []) or SCOPES)
+        new = set(getattr(exc, "new_scope", []) or [])
+        missing = [scope for scope in old if scope not in new]
+        raise AuthError(_scope_change_message(missing)) from exc
     _save_token(creds, token_file)
     return creds
+
+
+def _scope_change_message(missing: list[str]) -> str:
+    detail = "\n".join(f"  • {scope}" for scope in missing) or "  • (desconocido)"
+    return (
+        "Google autorizó la cuenta, pero no concedió todos los permisos:\n"
+        f"{detail}\n\n"
+        "Cómo arreglarlo:\n"
+        "1. Google Cloud → Google Auth Platform → Acceso a los datos (Data Access).\n"
+        "2. Pulsa 'Agregar o quitar permisos' y añade los scopes que faltan.\n"
+        "3. Vuelve a ejecutar: classroom-dl auth --force\n"
+        "En la pantalla de consentimiento deja TODAS las casillas marcadas."
+    )
 
 
 def _has_required_scopes(creds: Credentials) -> bool:

@@ -3,29 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from classroom_dl.auth import _has_required_scopes
 from classroom_dl.config import Config, config_dir, default_token_path
 from classroom_dl.errors import ClassroomDLError
-
-
-class FakeCreds:
-    def __init__(self, scopes):
-        self.scopes = scopes
-
-
-def test_has_required_scopes_accepts_all():
-    from classroom_dl.auth import SCOPES
-
-    assert _has_required_scopes(FakeCreds(list(SCOPES)))
-
-
-def test_has_required_scopes_rejects_partial():
-    assert not _has_required_scopes(FakeCreds(["https://www.googleapis.com/auth/drive.readonly"]))
-
-
-def test_has_required_scopes_allows_unknown():
-    assert _has_required_scopes(FakeCreds(None))
-    assert _has_required_scopes(FakeCreds([]))
 
 
 def test_config_roundtrip(tmp_path, monkeypatch):

@@ -101,6 +101,41 @@ Se abre el navegador. Inicia sesión con la cuenta que usa Classroom y acepta lo
 
 Todos son de **solo lectura**.
 
+### 3.6 Probar con compañeros
+
+Cada persona se autoriza con **su propia cuenta**: el token es personal y se guarda solo en su máquina. Hay dos formas de que varios compañeros prueben el proyecto:
+
+**Opción A — compartir el mismo proyecto (rápido, hasta 100 usuarios de prueba)**
+
+1. El dueño del proyecto entra a **Google Auth Platform → Público / Audience → Usuarios de prueba** y agrega el correo de cada compañero.
+2. Les pasa el `client_secret.json` por un canal privado (nunca por GitHub, Discord público ni el repo).
+3. Cada uno lo guarda en `~/.config/classroom-dl/client_secret.json`, instala el repo y ejecuta `classroom-dl auth`.
+
+**Opción B — cada uno crea su propio proyecto (recomendado si el repo es público)**
+
+Repite la sección 3 completa con su propia cuenta de Google. Son unos 5 minutos y evita compartir credenciales.
+
+Checklist para un compañero desde cero:
+
+```bash
+git clone git@github.com:MarcosNpm/Classroom-Downloader.git
+cd Classroom-Downloader
+python3 -m venv .venv
+.venv/bin/pip install -e .
+
+# Guardar su client_secret.json en ~/.config/classroom-dl/client_secret.json
+.venv/bin/classroom-dl auth
+.venv/bin/classroom-dl sync --dry-run
+.venv/bin/classroom-dl sync --all
+```
+
+En ambos casos:
+
+- **No compartan `token.json`**: da acceso a la cuenta de esa persona.
+- `client_secret.json` y `token.json` ya están en `.gitignore`; no deben subirse al repo.
+- El modo *Testing* admite hasta 100 usuarios de prueba y el token caduca a los 7 días para todos.
+- Si alguien ve el error `Scope has changed...`, está en la sección de problemas frecuentes.
+
 ---
 
 ## 4. Uso
@@ -239,6 +274,9 @@ Recuerda reautorizar cada 7 días si la app sigue en modo *Testing*.
 | `404 File not found` | El profesor borró el archivo o restringió el acceso. |
 | Los PDFs de Docs salen vacíos | El documento es muy grande o no es exportable; prueba `--docs-format docx`. |
 | `No hay cursos para mostrar` | La cuenta no es alumno en ningún curso activo (prueba `--teacher`). |
+| `Scope has changed from ... to ...` | Google no concedió todos los permisos. En **Google Auth Platform → Acceso a los datos** agrega el scope que falta (normalmente `classroom.coursework.me.readonly`) y repite `classroom-dl auth --force`. En la pantalla de consentimiento deja **todas** las casillas marcadas. |
+| «Google no ha verificado esta aplicación» | Normal en modo Testing: **Configuración avanzada → Ir a classroom-dl (no seguro)**. |
+| La cuenta institucional bloquea la app | Un administrador de Workspace puede restringir apps de terceros. Usa una cuenta personal o pide autorización al admin. |
 
 Para depurar, `sync --verbose` muestra también los archivos omitidos.
 

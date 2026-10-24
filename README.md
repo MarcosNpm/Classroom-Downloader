@@ -36,6 +36,8 @@ echo 'alias classroom-dl="/home/name/carpeta-destino/.venv/bin/classroom-dl"' >>
 source ~/.bashrc
 ```
 
+> **Windows:** hay launchers para cmd/PowerShell y un build de `.exe` en [`windows/README.md`](windows/README.md). Esa versión es independiente de la instalación de Linux.
+
 ---
 
 ## 3. Configurar Google Cloud (una sola vez)

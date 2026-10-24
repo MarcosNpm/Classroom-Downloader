@@ -25,14 +25,16 @@ ENV_OUTPUT = "CLASSROOM_DL_OUTPUT"
 
 def config_dir() -> Path:
     """Carpeta de configuración (credenciales, token, config.json)."""
-    path = Path(user_config_dir(APP_NAME))
+    # appauthor=False evita que en Windows quede una ruta duplicada:
+    # %LOCALAPPDATA%\classroom-dl\classroom-dl
+    path = Path(user_config_dir(APP_NAME, appauthor=False))
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def state_dir() -> Path:
     """Carpeta de estado (manifests de sincronización)."""
-    path = Path(user_state_dir(APP_NAME))
+    path = Path(user_state_dir(APP_NAME, appauthor=False))
     path.mkdir(parents=True, exist_ok=True)
     return path
 

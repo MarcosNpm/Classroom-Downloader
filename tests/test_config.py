@@ -3,8 +3,23 @@ from pathlib import Path
 
 import pytest
 
-from classroom_dl.config import Config, config_dir, default_token_path
+from classroom_dl.config import Config, config_dir, default_token_path, state_dir
 from classroom_dl.errors import ClassroomDLError
+
+
+def test_config_and_state_dirs_avoid_duplicated_windows_app_name(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_dir(appname, appauthor=None):
+        calls.append((appname, appauthor))
+        return str(tmp_path / "classroom-dl")
+
+    monkeypatch.setattr("classroom_dl.config.user_config_dir", fake_dir)
+    monkeypatch.setattr("classroom_dl.config.user_state_dir", fake_dir)
+
+    assert config_dir() == tmp_path / "classroom-dl"
+    assert state_dir() == tmp_path / "classroom-dl"
+    assert calls == [("classroom-dl", False), ("classroom-dl", False)]
 
 
 def test_config_roundtrip(tmp_path, monkeypatch):

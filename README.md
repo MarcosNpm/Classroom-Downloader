@@ -161,7 +161,7 @@ classroom-dl list 123456789 --since 2026-03-01
 ### Descargar
 
 ```bash
-# Interactivo: elige cursos con espacio + Enter
+# Interactivo: mueve con ↑/↓, marca con ESPACIO y confirma con Enter
 classroom-dl sync
 
 # Todos los cursos

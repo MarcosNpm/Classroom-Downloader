@@ -127,13 +127,25 @@ def pick_courses(courses: Sequence[Course], *, single: bool = False):
                 "Elige un curso:", choices=choices, instruction="(↑/↓ y Enter)"
             ).ask()
             return answer
-        answer = questionary.checkbox(
-            "Elige los cursos (espacio para marcar, Enter para confirmar):",
-            choices=choices,
-            instruction="(↑/↓, espacio, Enter)",
-        ).ask()
+
+        console = Console()
+        console.print(
+            "[dim]Para marcar un curso pulsa [bold]ESPACIO[/]; "
+            "[bold]Enter[/] solo confirma la selección.[/]"
+        )
+        while True:
+            answer = questionary.checkbox(
+                "Elige los cursos:",
+                choices=choices,
+                instruction="(↑/↓ mover · ESPACIO marcar · Enter confirmar)",
+            ).ask()
+            if answer is None:
+                raise ClassroomDLError("Selección cancelada.")
+            if answer:
+                return answer
+            console.print(
+                "[yellow]No marcaste ningún curso.[/] Pulsa [bold]ESPACIO[/] "
+                "sobre el curso que quieras y luego [bold]Enter[/]."
+            )
     except KeyboardInterrupt:
         raise ClassroomDLError("Selección cancelada.") from None
-    if not answer:
-        raise ClassroomDLError("No seleccionaste ningún curso.")
-    return answer

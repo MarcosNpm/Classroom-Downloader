@@ -1,0 +1,56 @@
+name: Windows tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+jobs:
+  windows:
+    name: Windows / Python 3.13
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" pyinstaller
+
+      - name: Unit tests
+        run: python -m pytest
+
+      - name: CLI module smoke test
+        run: python -m classroom_dl.cli --help
+
+      - name: CMD launcher smoke test
+        shell: cmd
+        run: windows\classroom-dl.cmd --help
+
+      - name: PowerShell launcher smoke test
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\windows\classroom-dl.ps1 --help
+
+      - name: Build EXE
+        run: python -m PyInstaller --clean --noconfirm --distpath windows/dist --workpath windows/build windows/classroom-dl.spec
+
+      - name: EXE smoke test
+        run: |
+          .\windows\dist\classroom-dl.exe --help
+          .\windows\dist\classroom-dl.exe version
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: classroom-dl-windows-test
+          path: windows/dist/classroom-dl.exe
+          if-no-files-found: error
+          retention-days: 7

@@ -27,7 +27,7 @@ Pasos:
    windows\classroom-dl.cmd
    ```
 
-   La primera vez crea un entorno en `%LOCALAPPDATA%\classroom-dl\venv`, instala las dependencias y abre el menú interactivo de cursos. Las siguientes veces arranca directo.
+   La primera vez crea un entorno en `%LOCALAPPDATA%\classroom-dl\venv`, instala las dependencias y abre el menú interactivo de cursos. Las siguientes veces arranca directo. No hace falta instalar `requirements.txt` a mano: el launcher usa `pyproject.toml`.
 
 4. Elegir los cursos con **↑/↓**, marcar con **ESPACIO** y confirmar con **Enter**.
 

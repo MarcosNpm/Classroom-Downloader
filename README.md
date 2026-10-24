@@ -19,6 +19,8 @@ CLI en Python para **descargar desde la terminal** los materiales, anuncios, tar
 
 ## 2. Instalación
 
+### Instalación manual
+
 ```bash
 cd /home/nickname/carpeta-destino
 
@@ -27,6 +29,34 @@ python3 -m venv .venv
 
 # El comando queda disponible dentro del venv:
 .venv/bin/classroom-dl --help
+```
+
+### Launcher automático para Linux
+
+Si no querés crear el entorno a mano:
+
+```bash
+chmod +x linux/classroom-dl.sh
+./linux/classroom-dl.sh
+```
+
+El launcher crea el entorno en `${XDG_DATA_HOME:-$HOME/.local/share}/classroom-dl/venv`, instala las dependencias y abre el menú interactivo de cursos. También acepta argumentos:
+
+```bash
+./linux/classroom-dl.sh sync --all
+./linux/classroom-dl.sh courses
+```
+
+En Debian/Ubuntu puede hacer falta instalar el módulo `venv`:
+
+```bash
+sudo apt install python3 python3-venv
+```
+
+Si preferís instalar solo las dependencias, también está `requirements.txt`:
+
+```bash
+python3 -m pip install -r requirements.txt
 ```
 
 Si quieres usarlo desde cualquier carpeta sin activar el venv, crea un alias:

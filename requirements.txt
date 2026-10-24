@@ -1,0 +1,11 @@
+# Dependencias de ejecución de classroom-dl.
+# La instalación recomendada es `pip install -e .` (usa pyproject.toml).
+# Este archivo sirve para instalaciones manuales con `pip install -r requirements.txt`.
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.1.0
+platformdirs>=4.0.0
+questionary>=2.0.0
+rich>=13.7.0
+typer>=0.12.0

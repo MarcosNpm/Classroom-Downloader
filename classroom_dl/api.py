@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+import re
 import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -69,6 +71,21 @@ _RATE_LIMIT_MARKERS = (
     "userratelimitexceeded",
     "quotaexceeded",
     "backenderror",
+)
+
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", re.IGNORECASE)
+_HTML_LINK_RE = re.compile(
+    r"<a\s+[^>]*href=[\"'](https?://[^\"']+)[\"'][^>]*>(.*?)</a>",
+    re.IGNORECASE | re.DOTALL,
+)
+_DRIVE_ID_PATTERNS = (
+    re.compile(r"drive\.google\.com/file/d/([A-Za-z0-9_-]+)"),
+    re.compile(r"drive\.google\.com/(?:open|uc)\?(?:[^#]*&)?id=([A-Za-z0-9_-]+)"),
+    re.compile(
+        r"docs\.google\.com/(?:document|spreadsheets|presentation|drawings)/d/"
+        r"([A-Za-z0-9_-]+)"
+    ),
 )
 
 
@@ -268,6 +285,86 @@ def _parse_materials(
     return tuple(files), tuple(links)
 
 
+def _clean_url(url: str) -> str:
+    """Quita comillas y puntuación que suele quedar pegada al copiar una URL."""
+    cleaned = url.strip().strip("<>\"'")
+    while cleaned and cleaned[-1] in ".,;:!?":
+        cleaned = cleaned[:-1]
+    for opening, closing in (("(", ")"), ("[", "]"), ("{", "}")):
+        while cleaned.endswith(closing) and cleaned.count(opening) < cleaned.count(closing):
+            cleaned = cleaned[:-1]
+    return cleaned
+
+
+def _link_title_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").removeprefix("www.")
+    last = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    if last in {"open", "uc"}:
+        file_id = parse_qs(parsed.query).get("id", [""])[0]
+        if file_id:
+            last = file_id[:12]
+    if last:
+        return f"{host} - {last}" if host else last
+    return host or "Enlace"
+
+
+def _extract_links(text: str) -> tuple[LinkAttachment, ...]:
+    """Extrae URLs pegadas en descripciones, anuncios y textos de tareas."""
+    if not text:
+        return ()
+
+    titles: dict[str, str] = {}
+    for match in _MARKDOWN_LINK_RE.finditer(text):
+        titles[_clean_url(match.group(2))] = match.group(1).strip()
+    for match in _HTML_LINK_RE.finditer(text):
+        title = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+        titles[_clean_url(match.group(1))] = title
+
+    result: list[LinkAttachment] = []
+    seen: set[str] = set()
+    for match in _URL_RE.finditer(text):
+        url = _clean_url(match.group(0))
+        if not url or url in seen or not urlparse(url).netloc:
+            continue
+        seen.add(url)
+        result.append(
+            LinkAttachment(title=titles.get(url) or _link_title_from_url(url), url=url)
+        )
+    return tuple(result)
+
+
+def _drive_file_id(url: str) -> str | None:
+    for pattern in _DRIVE_ID_PATTERNS:
+        match = pattern.search(url)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _parse_materials_with_text(
+    materials: Iterable[dict] | None,
+    text: str | None,
+) -> tuple[tuple[DriveAttachment, ...], tuple[LinkAttachment, ...]]:
+    """Combina adjuntos y enlaces escritos en el texto del contenido."""
+    files, links = _parse_materials(materials)
+    if not text:
+        return files, links
+
+    attached_ids = {file.file_id for file in files}
+    seen = {link.url for link in links}
+    extra: list[LinkAttachment] = []
+    for link in _extract_links(text):
+        if link.url in seen:
+            continue
+        drive_id = _drive_file_id(link.url)
+        if drive_id and drive_id in attached_ids:
+            continue
+        seen.add(link.url)
+        extra.append(link)
+    return files, links + tuple(extra)
+
+
 def _submission_attachments(
     raw: dict,
 ) -> tuple[tuple[DriveAttachment, ...], tuple[LinkAttachment, ...]]:
@@ -412,13 +509,14 @@ class ClassroomClient:
             )
 
         for raw in _paginate(request_factory, "courseWorkMaterial"):
-            files, links = _parse_materials(raw.get("materials"))
+            description = str(raw.get("description") or "")
+            files, links = _parse_materials_with_text(raw.get("materials"), description)
             yield Item(
                 kind="materials",
                 item_id=str(raw.get("id", "")),
                 title=str(raw.get("title") or "Material sin título"),
                 date=_parse_date(raw.get("creationTime"), raw.get("updateTime")),
-                description=str(raw.get("description") or ""),
+                description=description,
                 files=files,
                 links=links,
                 state=raw.get("state"),
@@ -439,7 +537,7 @@ class ClassroomClient:
 
         for raw in _paginate(request_factory, "announcements"):
             text = str(raw.get("text") or "")
-            files, links = _parse_materials(raw.get("materials"))
+            files, links = _parse_materials_with_text(raw.get("materials"), text)
             yield Item(
                 kind="announcements",
                 item_id=str(raw.get("id", "")),
@@ -465,13 +563,14 @@ class ClassroomClient:
             )
 
         for raw in _paginate(request_factory, "courseWork"):
-            files, links = _parse_materials(raw.get("materials"))
+            description = str(raw.get("description") or "")
+            files, links = _parse_materials_with_text(raw.get("materials"), description)
             yield Item(
                 kind="coursework",
                 item_id=str(raw.get("id", "")),
                 title=str(raw.get("title") or "Tarea sin título"),
                 date=_parse_date(raw.get("creationTime"), raw.get("updateTime")),
-                description=str(raw.get("description") or ""),
+                description=description,
                 files=files,
                 links=links,
                 state=raw.get("state"),

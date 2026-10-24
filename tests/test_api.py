@@ -7,9 +7,11 @@ from classroom_dl.api import (
     DriveAttachment,
     Item,
     _announcement_title,
+    _extract_links,
     _paginate,
     _parse_date,
     _parse_materials,
+    _parse_materials_with_text,
     execute_with_retry,
     parse_kinds,
 )
@@ -112,6 +114,44 @@ def test_parse_materials_extracts_files_and_links():
         DriveAttachment("f2", "apunte.pdf", url="http://y"),
     )
     assert [link.url for link in links] == ["http://yt", "http://web", "http://form"]
+
+
+def test_extract_links_from_text_and_markdown():
+    links = _extract_links(
+        "Mira https://example.com/a, y [GitHub](https://github.com/x/y). "
+        "Repetido: https://example.com/a"
+    )
+    assert [link.url for link in links] == [
+        "https://example.com/a",
+        "https://github.com/x/y",
+    ]
+    assert links[1].title == "GitHub"
+
+
+def test_clean_url_keeps_balanced_parentheses_and_trims_punctuation():
+    from classroom_dl.api import _clean_url
+
+    assert (
+        _clean_url("https://en.wikipedia.org/wiki/Foo_(bar).")
+        == "https://en.wikipedia.org/wiki/Foo_(bar)"
+    )
+    assert _clean_url("https://example.com/a).") == "https://example.com/a"
+
+
+def test_parse_materials_with_text_adds_description_links():
+    files, links = _parse_materials_with_text(
+        [
+            {"driveFile": {"id": "f1", "title": "guia.pdf"}},
+            {"link": {"title": "Web", "url": "https://example.com/a"}},
+        ],
+        "https://example.com/a https://drive.google.com/file/d/f1/view "
+        "https://extra.test/x",
+    )
+    assert [file.file_id for file in files] == ["f1"]
+    assert [link.url for link in links] == [
+        "https://example.com/a",
+        "https://extra.test/x",
+    ]
 
 
 def test_parse_date_handles_z_and_invalid():

@@ -4,7 +4,7 @@ CLI en Python para **descargar desde la terminal** los materiales, anuncios, tar
 
 - Sincronización incremental: no vuelve a bajar lo que ya tienes.
 - Exporta Google Docs/Sheets/Slides a formatos reales (PDF, DOCX, XLSX…).
-- Guarda YouTube, Forms y enlaces web como accesos directos `.url`.
+- Guarda YouTube, Forms y enlaces web como `.url`, incluso si están pegados en la descripción de una tarea, material o anuncio.
 - Selección interactiva de cursos o modo script (`--all`, `--course ID`).
 - Reanudable: descarga a `.part` y renombra al terminar.
 - Solo lectura: no modifica nada en Classroom ni en Drive.

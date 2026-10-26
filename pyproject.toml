@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "classroom-dl"
-version = "0.1.0"
+version = "0.3.0"
 description = "Descarga materiales, tareas y entregas de Google Classroom desde la terminal"
 readme = "README.md"
 requires-python = ">=3.10"

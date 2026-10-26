@@ -24,7 +24,14 @@ from .drive import DriveDownloader
 from .errors import AuthError, ClassroomDLError
 from .state import Manifest, list_manifests
 from .sync import SyncOptions, SyncResult, sync_course
-from .ui import RichReporter, courses_table, items_table, pick_courses, results_table
+from .ui import (
+    RichDownloadProgress,
+    RichReporter,
+    courses_table,
+    items_table,
+    pick_courses,
+    results_table,
+)
 
 app = typer.Typer(
     name="classroom-dl",
@@ -260,7 +267,12 @@ def sync(
     prune: bool = typer.Option(
         False, "--prune", help="Olvida del manifest los archivos que ya no están en disco."
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Muestra también los omitidos."),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Muestra el progreso de cada descarga (tamaño, velocidad y tiempo) y los omitidos.",
+    ),
 ) -> None:
     """Descarga los contenidos de uno o varios cursos."""
     config: Config = ctx.obj
@@ -273,6 +285,7 @@ def sync(
     credentials, client = _connect(config)
     downloader = DriveDownloader(credentials)  # type: ignore[arg-type]
     reporter = RichReporter(console, verbose=verbose)
+    progress = RichDownloadProgress(console) if verbose else None
 
     try:
         available = client.courses(role="all" if teacher else "student")
@@ -339,6 +352,7 @@ def sync(
                     manifest=manifest,
                     options=options,
                     reporter=reporter,
+                    progress=progress,
                 )
             except KeyboardInterrupt:
                 raise

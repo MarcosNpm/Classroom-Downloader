@@ -18,8 +18,12 @@ from googleapiclient.http import MediaIoBaseDownload
 
 from .api import DriveAttachment, LinkAttachment
 from .errors import DownloadError
+from .progress import DownloadProgress
 
 CHUNK_SIZE = 8 * 1024 * 1024
+# Con progreso detallado usamos bloques más chicos para que la barra avance
+# también en archivos pequeños. Sin verbose mantenemos el tamaño de siempre.
+PROGRESS_CHUNK_SIZE = 1024 * 1024
 MAX_ATTEMPTS = 6
 
 # Tipos nativos de Google que se exportan a un formato "real".
@@ -111,6 +115,7 @@ class DownloadResult:
     modified_time: str | None = None
     size: int | None = None
     is_shortcut: bool = False
+    elapsed: float | None = None
 
 
 class DriveDownloader:
@@ -187,6 +192,7 @@ class DriveDownloader:
         docs_format: str = "pdf",
         sheets_format: str = "xlsx",
         overwrite: bool = True,
+        progress: DownloadProgress | None = None,
     ) -> DownloadResult:
         meta = self.metadata(attachment.file_id)
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -221,14 +227,36 @@ class DriveDownloader:
         path = dest_dir / filename
         if not overwrite:
             path = _non_clashing_path(path)
-        self._download_to_file(
-            request,
-            path,
-            expected_size=meta.size if export is None else None,
-            file_id=attachment.file_id,
+        expected_size = meta.size if export is None else None
+        task_id = (
+            progress.add_task(path.name, expected_size, dest_dir=dest_dir)
+            if progress is not None
+            else None
         )
+        started = time.monotonic()
+        try:
+            self._download_to_file(
+                request,
+                path,
+                expected_size=expected_size,
+                file_id=attachment.file_id,
+                progress=progress,
+                task_id=task_id,
+            )
+        except BaseException as exc:
+            if progress is not None and task_id is not None:
+                progress.fail_task(task_id, str(exc))
+            raise
+        elapsed = time.monotonic() - started
         size = path.stat().st_size
-        return DownloadResult(path=path, modified_time=meta.modified_time, size=size)
+        if progress is not None and task_id is not None:
+            progress.finish_task(task_id, path, size)
+        return DownloadResult(
+            path=path,
+            modified_time=meta.modified_time,
+            size=size,
+            elapsed=elapsed,
+        )
 
     def _write_shortcut(
         self,
@@ -248,7 +276,14 @@ class DriveDownloader:
         )
 
     def _download_to_file(
-        self, request, path: Path, *, expected_size: int | None, file_id: str
+        self,
+        request,
+        path: Path,
+        *,
+        expected_size: int | None,
+        file_id: str,
+        progress: DownloadProgress | None = None,
+        task_id: int | None = None,
     ) -> None:
         part = path.with_name(path.name + ".part")
         if part.exists():
@@ -256,11 +291,23 @@ class DriveDownloader:
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
+                if progress is not None and task_id is not None:
+                    progress.update_task(task_id, 0, expected_size)
                 with part.open("wb") as handle:
-                    downloader = MediaIoBaseDownload(handle, request, chunksize=CHUNK_SIZE)
+                    chunksize = CHUNK_SIZE if progress is None else PROGRESS_CHUNK_SIZE
+                    downloader = MediaIoBaseDownload(handle, request, chunksize=chunksize)
                     done = False
                     while not done:
-                        _, done = downloader.next_chunk()
+                        status, done = downloader.next_chunk()
+                        if progress is not None and task_id is not None:
+                            total = status.total_size
+                            if total is None:
+                                total = expected_size
+                            progress.update_task(
+                                task_id,
+                                int(status.resumable_progress or 0),
+                                total,
+                            )
                 break
             except HttpError as exc:
                 part.unlink(missing_ok=True)

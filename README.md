@@ -6,6 +6,7 @@ CLI en Python para **descargar desde la terminal** los materiales, anuncios, tar
 - Exporta Google Docs/Sheets/Slides a formatos reales (PDF, DOCX, XLSX…).
 - Guarda YouTube, Forms y enlaces web como `.url`, incluso si están pegados en la descripción de una tarea, material o anuncio.
 - Selección interactiva de cursos o modo script (`--all`, `--course ID`).
+- Progreso detallado con `--verbose`: archivo, tamaño, velocidad y tiempo restante.
 - Reanudable: descarga a `.part` y renombra al terminar.
 - Solo lectura: no modifica nada en Classroom ni en Drive.
 
@@ -44,6 +45,7 @@ El launcher crea el entorno en `${XDG_DATA_HOME:-$HOME/.local/share}/classroom-d
 
 ```bash
 ./linux/classroom-dl.sh sync --all
+./linux/classroom-dl.sh sync --all --verbose   # progreso detallado de cada archivo
 ./linux/classroom-dl.sh courses
 ```
 
@@ -211,9 +213,14 @@ classroom-dl sync --all --only tareas,entregas --since 2026-03-01
 
 # Revisar si algún archivo cambió en Drive
 classroom-dl sync --all --refresh
+
+# Ver el progreso de cada descarga: archivo, tamaño, velocidad y tiempo
+classroom-dl sync --all --verbose
 ```
 
 Tipos disponibles para `--only`: `materiales`, `anuncios`, `tareas`, `entregas` (o sus nombres en inglés), y `all`.
+
+Con `--verbose` se muestra una barra por archivo mientras se descarga. Si la salida no es una terminal (por ejemplo, un cron con salida a un log), se imprimen líneas de texto con el avance y la velocidad, sin códigos ANSI.
 
 ### Estado y configuración
 
@@ -310,7 +317,7 @@ Recuerda reautorizar cada 7 días si la app sigue en modo *Testing*.
 | «Google no ha verificado esta aplicación» | Normal en modo Testing: **Configuración avanzada → Ir a classroom-dl (no seguro)**. |
 | La cuenta institucional bloquea la app | Un administrador de Workspace puede restringir apps de terceros. Usa una cuenta personal o pide autorización al admin. |
 
-Para depurar, `sync --verbose` muestra también los archivos omitidos.
+Para depurar, `sync --verbose` muestra el progreso detallado de las descargas y también los archivos omitidos.
 
 ---
 
@@ -331,6 +338,7 @@ classroom_dl/
 ├── api.py      # Classroom API, paginación y reintentos
 ├── drive.py    # descarga y exportación de Drive
 ├── sync.py     # orquestación y concurrencia
+├── progress.py # protocolo de progreso de descargas
 ├── state.py    # manifest incremental
 ├── paths.py    # nombres y carpetas seguras
 ├── ui.py       # tablas rich y selección interactiva

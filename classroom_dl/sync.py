@@ -12,6 +12,7 @@ from typing import Protocol
 from .api import ALL_KINDS, DriveAttachment, Item, LinkAttachment
 from .drive import DownloadResult, DriveMetadata, write_link
 from .paths import KIND_FOLDERS, course_folder_name, item_folder_name, sanitize_name, unique_name
+from .progress import DownloadProgress
 from .state import Manifest, ManifestEntry
 
 
@@ -33,12 +34,16 @@ class Downloader(Protocol):
         docs_format: str = "pdf",
         sheets_format: str = "xlsx",
         overwrite: bool = True,
+        progress: DownloadProgress | None = None,
     ) -> DownloadResult: ...
 
 
 class Reporter(Protocol):
     def info(self, message: str) -> None: ...
     def ok(self, message: str) -> None: ...
+    def download(
+        self, message: str, *, size: int | None = None, elapsed: float | None = None
+    ) -> None: ...
     def skip(self, message: str) -> None: ...
     def warn(self, message: str) -> None: ...
     def error(self, message: str) -> None: ...
@@ -47,6 +52,9 @@ class Reporter(Protocol):
 class NullReporter:
     def info(self, message: str) -> None: ...
     def ok(self, message: str) -> None: ...
+    def download(
+        self, message: str, *, size: int | None = None, elapsed: float | None = None
+    ) -> None: ...
     def skip(self, message: str) -> None: ...
     def warn(self, message: str) -> None: ...
     def error(self, message: str) -> None: ...
@@ -86,7 +94,7 @@ class SyncResult:
             f"{self.updated} actualizados",
             f"{self.skipped} ya estaban",
             f"{self.links} enlaces",
-            _human_size(self.bytes),
+            human_size(self.bytes),
         ]
         if self.errors:
             parts.append(f"{len(self.errors)} errores")
@@ -111,6 +119,7 @@ def sync_course(
     manifest: Manifest,
     options: SyncOptions,
     reporter: Reporter | None = None,
+    progress: DownloadProgress | None = None,
 ) -> SyncResult:
     """Sincroniza un curso. No lanza por errores de archivos sueltos."""
     reporter = reporter or NullReporter()
@@ -188,7 +197,22 @@ def sync_course(
                 link_writes.append((key, link_dir, basename, link))
 
     if tasks:
-        _run_downloads(tasks, downloader, manifest, output_root, options, reporter, result)
+        if progress is not None:
+            progress.start_session()
+        try:
+            _run_downloads(
+                tasks,
+                downloader,
+                manifest,
+                output_root,
+                options,
+                reporter,
+                result,
+                progress,
+            )
+        finally:
+            if progress is not None:
+                progress.stop_session()
 
     for key, link_dir, basename, link in link_writes:
         try:
@@ -226,6 +250,7 @@ def _run_downloads(
     options: SyncOptions,
     reporter: Reporter,
     result: SyncResult,
+    progress: DownloadProgress | None = None,
 ) -> None:
     jobs = max(1, min(options.jobs, 8))
     with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="dl") as pool:
@@ -238,6 +263,7 @@ def _run_downloads(
                 docs_format=options.docs_format,
                 sheets_format=options.sheets_format,
                 overwrite=manifest.get(task.key) is not None,
+                progress=progress,
             ): task
             for task in tasks
         }
@@ -268,7 +294,11 @@ def _run_downloads(
                     ),
                 )
                 suffix = " (enlace)" if download.is_shortcut else ""
-                reporter.ok(f"{_relative(download.path, output_root)}{suffix}")
+                reporter.download(
+                    f"{_relative(download.path, output_root)}{suffix}",
+                    size=download.size,
+                    elapsed=download.elapsed,
+                )
         except KeyboardInterrupt:
             reporter.warn("Interrumpido: guardando lo descargado hasta ahora...")
             for future in futures:
@@ -306,7 +336,8 @@ def _relative(path: Path, root: Path) -> str:
         return str(path)
 
 
-def _human_size(num: int) -> str:
+def human_size(num: int) -> str:
+    """Formatea una cantidad de bytes para mostrarla en la terminal."""
     value = float(num)
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":

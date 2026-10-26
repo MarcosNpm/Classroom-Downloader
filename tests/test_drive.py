@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import classroom_dl.drive as drive_module
 from classroom_dl.api import DriveAttachment, LinkAttachment
 from classroom_dl.drive import (
     EXPORT_FORMATS,
+    DriveDownloader,
     DriveMetadata,
     _extension_for,
     _non_clashing_path,
@@ -70,3 +72,111 @@ def test_write_link_creates_url_shortcut(tmp_path):
     assert "[InternetShortcut]" in content
     assert "https://forms.example/x" in content
     assert isinstance(path, Path)
+
+
+class FakeStatus:
+    def __init__(self, resumable_progress, total_size):
+        self.resumable_progress = resumable_progress
+        self.total_size = total_size
+
+
+class FakeMediaDownload:
+    def __init__(self, handle, request, chunksize=None):
+        self.handle = handle
+        self._chunks = [(b"abc", 3, 6), (b"def", 6, 6)]
+        self._index = 0
+
+    def next_chunk(self):
+        chunk, progress, total = self._chunks[self._index]
+        self.handle.write(chunk)
+        self._index += 1
+        return FakeStatus(progress, total), self._index == len(self._chunks)
+
+
+class RecordingProgress:
+    def __init__(self):
+        self.added = []
+        self.updates = []
+        self.finished = []
+        self.failed = []
+
+    def start_session(self):
+        pass
+
+    def stop_session(self):
+        pass
+
+    def add_task(self, name, total, *, dest_dir=None):
+        self.added.append((name, total, dest_dir))
+        return len(self.added) - 1
+
+    def update_task(self, task_id, downloaded, total):
+        self.updates.append((task_id, downloaded, total))
+
+    def finish_task(self, task_id, path, size):
+        self.finished.append((task_id, path, size))
+
+    def fail_task(self, task_id, message):
+        self.failed.append((task_id, message))
+
+
+class FakeFiles:
+    def get_media(self, **kwargs):
+        return object()
+
+
+class FakeService:
+    def files(self):
+        return FakeFiles()
+
+
+def test_download_to_file_reports_progress(tmp_path, monkeypatch):
+    monkeypatch.setattr(drive_module, "MediaIoBaseDownload", FakeMediaDownload)
+    downloader = DriveDownloader(credentials=None)  # type: ignore[arg-type]
+    progress = RecordingProgress()
+    task_id = progress.add_task("archivo.bin", 6)
+    path = tmp_path / "archivo.bin"
+
+    downloader._download_to_file(
+        object(),
+        path,
+        expected_size=6,
+        file_id="f1",
+        progress=progress,
+        task_id=task_id,
+    )
+
+    assert path.read_bytes() == b"abcdef"
+    assert progress.updates[0] == (task_id, 0, 6)
+    assert progress.updates[-1] == (task_id, 6, 6)
+
+
+def test_download_starts_and_finishes_progress_task(tmp_path, monkeypatch):
+    monkeypatch.setattr(drive_module, "build", lambda *args, **kwargs: FakeService())
+    monkeypatch.setattr(drive_module, "MediaIoBaseDownload", FakeMediaDownload)
+    downloader = DriveDownloader(credentials=None)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        downloader,
+        "metadata",
+        lambda file_id: DriveMetadata(
+            file_id=file_id,
+            name="archivo.bin",
+            mime_type="application/octet-stream",
+            size=6,
+        ),
+    )
+    progress = RecordingProgress()
+
+    result = downloader.download(
+        DriveAttachment("f1", "archivo.bin"),
+        tmp_path,
+        "archivo",
+        progress=progress,
+    )
+
+    assert result.path == tmp_path / "archivo.bin"
+    assert result.size == 6
+    assert result.elapsed is not None
+    assert progress.added == [("archivo.bin", 6, tmp_path)]
+    assert progress.finished == [(0, tmp_path / "archivo.bin", 6)]
+    assert progress.failed == []

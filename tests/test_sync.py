@@ -48,6 +48,7 @@ class FakeDownloader:
         docs_format="pdf",
         sheets_format="xlsx",
         overwrite=True,
+        progress=None,
     ):
         self.download_calls.append(attachment.file_id)
         if attachment.file_id in self.fail_ids:
@@ -60,7 +61,41 @@ class FakeDownloader:
                 counter += 1
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("abc")
-        return DownloadResult(path=path, modified_time=self.modified, size=3)
+        if progress is not None:
+            task_id = progress.add_task(basename, 3, dest_dir=dest_dir)
+            progress.update_task(task_id, 3, 3)
+            progress.finish_task(task_id, path, 3)
+        return DownloadResult(path=path, modified_time=self.modified, size=3, elapsed=0.5)
+
+
+class RecordingProgress:
+    def __init__(self):
+        self.session_starts = 0
+        self.session_stops = 0
+        self.tasks = []
+        self.updates = []
+        self.finished = []
+        self.failed = []
+
+    def start_session(self):
+        self.session_starts += 1
+
+    def stop_session(self):
+        self.session_stops += 1
+
+    def add_task(self, name, total, *, dest_dir=None):
+        task_id = len(self.tasks)
+        self.tasks.append((name, total, dest_dir))
+        return task_id
+
+    def update_task(self, task_id, downloaded, total):
+        self.updates.append((task_id, downloaded, total))
+
+    def finish_task(self, task_id, path, size):
+        self.finished.append((task_id, path, size))
+
+    def fail_task(self, task_id, message):
+        self.failed.append((task_id, message))
 
 
 def _manifest(tmp_path):
@@ -87,7 +122,7 @@ def _items():
     ]
 
 
-def _sync(tmp_path, downloader, options=None, manifest=None, items=None):
+def _sync(tmp_path, downloader, options=None, manifest=None, items=None, progress=None):
     output = tmp_path / "out"
     manifest = manifest or _manifest(tmp_path)
     result = sync_course(
@@ -98,6 +133,7 @@ def _sync(tmp_path, downloader, options=None, manifest=None, items=None):
         output_root=output,
         manifest=manifest,
         options=options or SyncOptions(),
+        progress=progress,
     )
     return result, manifest, output
 
@@ -120,6 +156,20 @@ def test_sync_downloads_files_and_links(tmp_path):
     assert manifest.get("file:cw1:f2") is not None
     assert manifest.get("link:m1:1") is not None
     assert manifest.last_sync is not None
+
+
+def test_sync_reports_download_progress(tmp_path):
+    downloader = FakeDownloader()
+    progress = RecordingProgress()
+    result, _, _ = _sync(tmp_path, downloader, progress=progress)
+
+    assert result.errors == []
+    assert progress.session_starts == 1
+    assert progress.session_stops == 1
+    assert len(progress.tasks) == 2
+    assert len(progress.updates) == 2
+    assert len(progress.finished) == 2
+    assert progress.failed == []
 
 
 def test_sync_is_idempotent(tmp_path):

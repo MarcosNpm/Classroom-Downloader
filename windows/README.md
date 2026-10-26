@@ -36,6 +36,7 @@ También se puede usar desde cmd o PowerShell pasando comandos:
 ```bat
 windows\classroom-dl.cmd courses
 windows\classroom-dl.cmd sync --all
+windows\classroom-dl.cmd sync --all --verbose
 windows\classroom-dl.cmd sync --course 689753457843
 windows\classroom-dl.cmd auth --force
 ```

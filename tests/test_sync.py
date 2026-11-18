@@ -98,6 +98,18 @@ class RecordingProgress:
         self.failed.append((task_id, message))
 
 
+class RecordingFetchStatus:
+    def __init__(self):
+        self.messages = []
+        self.stopped = 0
+
+    def update(self, message):
+        self.messages.append(message)
+
+    def stop(self):
+        self.stopped += 1
+
+
 def _manifest(tmp_path):
     return Manifest(course_id="c1", course_name="Curso", path=tmp_path / "manifest.json")
 
@@ -170,6 +182,25 @@ def test_sync_reports_download_progress(tmp_path):
     assert len(progress.updates) == 2
     assert len(progress.finished) == 2
     assert progress.failed == []
+
+
+def test_sync_reports_fetch_status(tmp_path):
+    status = RecordingFetchStatus()
+    result = sync_course(
+        fetcher=FakeFetcher(_items()),
+        downloader=FakeDownloader(),
+        course_id="c1",
+        course_name="Curso",
+        output_root=tmp_path / "out",
+        manifest=_manifest(tmp_path),
+        options=SyncOptions(),
+        fetch_status=status,
+    )
+
+    assert result.items == 2
+    assert status.messages[0] == "Leyendo contenidos de Curso…"
+    assert any("2 elementos" in message for message in status.messages)
+    assert status.stopped == 1
 
 
 def test_sync_is_idempotent(tmp_path):
@@ -267,6 +298,113 @@ def test_sync_prune_forgets_missing_files(tmp_path):
     )
     assert manifest.get("file:gone:999") is None
     assert result.errors == []
+
+
+def test_sync_writes_note_for_task_without_attachments(tmp_path):
+    items = [
+        Item(
+            kind="coursework",
+            item_id="cw99",
+            title="LinkedIn",
+            date=date(2026, 11, 18),
+            description="El perfil se entrega como URL pública.",
+            state="PUBLISHED",
+            url="https://classroom.google.com/c/1/a/2",
+        )
+    ]
+    result, manifest, output = _sync(tmp_path, FakeDownloader(), items=items)
+
+    note = output / "Curso" / "Tareas" / "2026-11-18 - LinkedIn" / "LinkedIn.md"
+    text = note.read_text(encoding="utf-8")
+    assert "# LinkedIn" in text
+    assert "El perfil se entrega como URL pública." in text
+    assert "https://classroom.google.com/c/1/a/2" in text
+    assert result.notes == 1
+    assert manifest.get("note:coursework:cw99") is not None
+
+
+def test_sync_updates_note_when_description_changes(tmp_path):
+    original = Item(
+        kind="coursework",
+        item_id="cw99",
+        title="LinkedIn",
+        date=date(2026, 11, 18),
+        description="Versión 1",
+    )
+    _sync(tmp_path, FakeDownloader(), items=[original])
+    note = tmp_path / "out" / "Curso" / "Tareas" / "2026-11-18 - LinkedIn" / "LinkedIn.md"
+    assert "Versión 1" in note.read_text(encoding="utf-8")
+
+    manifest = Manifest(course_id="c1", path=tmp_path / "manifest.json")
+    manifest.load()
+    changed = Item(
+        kind="coursework",
+        item_id="cw99",
+        title="LinkedIn",
+        date=date(2026, 11, 18),
+        description="Versión 2",
+    )
+    result, _, _ = _sync(tmp_path, FakeDownloader(), manifest=manifest, items=[changed])
+
+    assert "Versión 2" in note.read_text(encoding="utf-8")
+    assert result.notes == 1
+
+
+def test_sync_renames_old_generic_note(tmp_path):
+    items = [
+        Item(
+            kind="coursework",
+            item_id="cw99",
+            title="LinkedIn",
+            date=date(2026, 11, 18),
+            description="Consigna",
+        )
+    ]
+    manifest = Manifest(course_id="c1", course_name="Curso", path=tmp_path / "manifest.json")
+    old_note = (
+        tmp_path
+        / "out"
+        / "Curso"
+        / "Tareas"
+        / "2026-11-18 - LinkedIn"
+        / "Tarea.md"
+    )
+    old_note.parent.mkdir(parents=True)
+    old_note.write_text("# viejo", encoding="utf-8")
+    manifest.record(
+        "note:coursework:cw99",
+        ManifestEntry(path="Curso/Tareas/2026-11-18 - LinkedIn/Tarea.md"),
+    )
+    manifest.save(force=True)
+
+    result, manifest, output = _sync(tmp_path, FakeDownloader(), manifest=manifest, items=items)
+
+    new_note = output / "Curso" / "Tareas" / "2026-11-18 - LinkedIn" / "LinkedIn.md"
+    assert new_note.exists()
+    assert not old_note.exists()
+    assert result.notes == 1
+    assert manifest.get("note:coursework:cw99").path.endswith("LinkedIn.md")
+
+
+def test_sync_notes_can_be_disabled(tmp_path):
+    items = [
+        Item(
+            kind="coursework",
+            item_id="cw99",
+            title="LinkedIn",
+            date=date(2026, 11, 18),
+            description="Sin adjuntos",
+        )
+    ]
+    result, _, output = _sync(
+        tmp_path,
+        FakeDownloader(),
+        options=SyncOptions(notes=False),
+        items=items,
+    )
+
+    assert result.notes == 0
+    assert not (output / "Curso" / "Tareas").exists()
 
 
 def test_sync_duplicate_names_get_suffix(tmp_path):

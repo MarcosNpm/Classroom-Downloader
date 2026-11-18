@@ -48,18 +48,26 @@ class RichReporter:
             self.console.print(f"[green]↓[/] {message}")
 
     def download(
-        self, message: str, *, size: int | None = None, elapsed: float | None = None
+        self,
+        message: str,
+        *,
+        size: int | None = None,
+        elapsed: float | None = None,
+        done: int | None = None,
+        total: int | None = None,
     ) -> None:
         message = escape(message)
+        counter = _file_counter(done, total)
         with _OUTPUT_LOCK:
             if self.verbose and size is not None and elapsed is not None and elapsed > 0:
                 speed = size / elapsed
                 self.console.print(
                     f"[green]↓[/] {message} "
-                    f"[dim]({human_size(size)} en {elapsed:.1f}s · {human_size(int(speed))}/s)[/]"
+                    f"[dim]({human_size(size)} en {elapsed:.1f}s · "
+                    f"{human_size(int(speed))}/s){counter}[/]"
                 )
             else:
-                self.console.print(f"[green]↓[/] {message}")
+                self.console.print(f"[green]↓[/] {message}{counter}")
 
     def skip(self, message: str) -> None:
         if self.verbose:
@@ -70,9 +78,22 @@ class RichReporter:
         with _OUTPUT_LOCK:
             self.console.print(f"[yellow]![/] {message}")
 
-    def error(self, message: str) -> None:
+    def error(
+        self,
+        message: str,
+        *,
+        done: int | None = None,
+        total: int | None = None,
+    ) -> None:
         with _OUTPUT_LOCK:
-            self.console.print(f"[red]✗[/] {message}")
+            self.console.print(f"[red]✗[/] {message}{_file_counter(done, total)}")
+
+
+def _file_counter(done: int | None, total: int | None) -> str:
+    if done is None or total is None or total <= 0:
+        return ""
+    percent = done * 100 // total
+    return f" [dim]· {done}/{total} archivos ({percent}%)[/]"
 
 
 @dataclass
@@ -88,6 +109,44 @@ def _download_label(name: str, dest_dir: Path | None) -> str:
     if dest_dir is not None and dest_dir.name:
         return f"{dest_dir.name}/{name}"
     return name
+
+
+class LoadingStatus:
+    """Spinner para fases sin total conocido.
+
+    Solo se muestra cuando la consola es interactiva; en cron, logs o salidas
+    redirigidas no imprime nada. Se puede detener antes de tiempo con
+    ``stop()`` para dejar paso a otro tipo de progreso.
+    """
+
+    def __init__(self, console: Console, message: str, *, enabled: bool = True) -> None:
+        self.console = console
+        self.message = message
+        self.enabled = enabled and console.is_terminal and not console.is_dumb_terminal
+        self._status = None
+
+    def __enter__(self) -> LoadingStatus:
+        if self.enabled:
+            self._status = self.console.status(self._render(self.message), spinner="dots")
+            self._status.__enter__()
+        return self
+
+    def update(self, message: str) -> None:
+        self.message = message
+        if self._status is not None:
+            self._status.update(self._render(message))
+
+    def stop(self) -> None:
+        if self._status is not None:
+            self._status.__exit__(None, None, None)
+            self._status = None
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.stop()
+
+    @staticmethod
+    def _render(message: str) -> str:
+        return f"[cyan]{escape(message)}[/]"
 
 
 class RichDownloadProgress:

@@ -9,11 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from .api import ALL_KINDS, DriveAttachment, Item, LinkAttachment
+from .api import ALL_KINDS, KIND_LABELS, DriveAttachment, Item, LinkAttachment
+from .config import _atomic_write_text
 from .drive import DownloadResult, DriveMetadata, write_link
 from .paths import KIND_FOLDERS, course_folder_name, item_folder_name, sanitize_name, unique_name
 from .progress import DownloadProgress
 from .state import Manifest, ManifestEntry
+
+NOTE_KINDS = frozenset({"materials", "announcements", "coursework"})
 
 
 class Fetcher(Protocol):
@@ -42,22 +45,53 @@ class Reporter(Protocol):
     def info(self, message: str) -> None: ...
     def ok(self, message: str) -> None: ...
     def download(
-        self, message: str, *, size: int | None = None, elapsed: float | None = None
+        self,
+        message: str,
+        *,
+        size: int | None = None,
+        elapsed: float | None = None,
+        done: int | None = None,
+        total: int | None = None,
     ) -> None: ...
     def skip(self, message: str) -> None: ...
     def warn(self, message: str) -> None: ...
-    def error(self, message: str) -> None: ...
+    def error(
+        self,
+        message: str,
+        *,
+        done: int | None = None,
+        total: int | None = None,
+    ) -> None: ...
+
+
+class FetchStatus(Protocol):
+    """Estado de la fase de lectura de contenidos (sin total conocido)."""
+
+    def update(self, message: str) -> None: ...
+    def stop(self) -> None: ...
 
 
 class NullReporter:
     def info(self, message: str) -> None: ...
     def ok(self, message: str) -> None: ...
     def download(
-        self, message: str, *, size: int | None = None, elapsed: float | None = None
+        self,
+        message: str,
+        *,
+        size: int | None = None,
+        elapsed: float | None = None,
+        done: int | None = None,
+        total: int | None = None,
     ) -> None: ...
     def skip(self, message: str) -> None: ...
     def warn(self, message: str) -> None: ...
-    def error(self, message: str) -> None: ...
+    def error(
+        self,
+        message: str,
+        *,
+        done: int | None = None,
+        total: int | None = None,
+    ) -> None: ...
 
 
 @dataclass
@@ -71,6 +105,7 @@ class SyncOptions:
     jobs: int = 2
     links: bool = True
     prune: bool = False
+    notes: bool = True
 
 
 @dataclass
@@ -81,6 +116,7 @@ class SyncResult:
     updated: int = 0
     skipped: int = 0
     links: int = 0
+    notes: int = 0
     bytes: int = 0
     errors: list[tuple[str, str]] = field(default_factory=list)
 
@@ -96,6 +132,8 @@ class SyncResult:
             f"{self.links} enlaces",
             human_size(self.bytes),
         ]
+        if self.notes:
+            parts.insert(-1, f"{self.notes} notas")
         if self.errors:
             parts.append(f"{len(self.errors)} errores")
         return ", ".join(parts)
@@ -120,6 +158,7 @@ def sync_course(
     options: SyncOptions,
     reporter: Reporter | None = None,
     progress: DownloadProgress | None = None,
+    fetch_status: FetchStatus | None = None,
 ) -> SyncResult:
     """Sincroniza un curso. No lanza por errores de archivos sueltos."""
     reporter = reporter or NullReporter()
@@ -130,13 +169,36 @@ def sync_course(
     tasks: list[_Task] = []
     link_writes: list[tuple[str, Path, str, LinkAttachment]] = []
 
-    items = list(fetcher.items(course_id, options.kinds, since=options.since))
+    if fetch_status is not None:
+        fetch_status.update(f"Leyendo contenidos de {course_name}…")
+    items: list[Item] = []
+    for item in fetcher.items(course_id, options.kinds, since=options.since):
+        items.append(item)
+        if fetch_status is not None:
+            fetch_status.update(f"Leyendo contenidos de {course_name}… {len(items)} elementos")
     result.items = len(items)
 
-    for item in items:
+    for position, item in enumerate(items, start=1):
+        if fetch_status is not None:
+            fetch_status.update(
+                f"Preparando {course_name}… {position}/{len(items)} contenidos"
+            )
         item_dir = course_dir / KIND_FOLDERS.get(item.kind, item.kind.title()) / item_folder_name(
             item.date, item.title
         )
+
+        if options.notes:
+            _write_note(
+                item=item,
+                course_name=course_name,
+                item_dir=item_dir,
+                output_root=output_root,
+                manifest=manifest,
+                used_names=used_names,
+                options=options,
+                result=result,
+                reporter=reporter,
+            )
 
         for index, attachment in enumerate(item.files, start=1):
             key = f"file:{item.item_id}:{attachment.file_id}"
@@ -196,7 +258,11 @@ def sync_course(
                     continue
                 link_writes.append((key, link_dir, basename, link))
 
+    if fetch_status is not None:
+        fetch_status.stop()
+
     if tasks:
+        reporter.info(f"{len(tasks)} archivos por descargar")
         if progress is not None:
             progress.start_session()
         try:
@@ -242,6 +308,110 @@ def sync_course(
     return result
 
 
+def _note_text(item: Item, course_name: str) -> str:
+    """Contenido Markdown de la nota de un ítem."""
+    lines = [f"# {item.title}", ""]
+    lines.append(f"- **Curso:** {course_name}")
+    lines.append(f"- **Tipo:** {KIND_LABELS.get(item.kind, item.kind)}")
+    if item.date is not None:
+        lines.append(f"- **Fecha:** {item.date.isoformat()}")
+    if item.state:
+        lines.append(f"- **Estado:** {item.state}")
+    lines.append(f"- **ID:** {item.item_id}")
+    if item.url:
+        lines.append(f"- **Enlace:** {item.url}")
+
+    heading = "Consigna" if item.kind == "coursework" else "Descripción"
+    body = item.description.strip() or "_Sin descripción._"
+    lines.extend(["", f"## {heading}", "", body, ""])
+    return "\n".join(lines)
+
+
+def _note_filename(title: str) -> str:
+    """Nombre de la nota: el mismo título del ítem, con extensión .md."""
+    clean = (title or "").strip()
+    if clean.lower().endswith(".md"):
+        return sanitize_name(clean, fallback="nota.md")
+    return sanitize_name(f"{clean}.md", fallback="nota.md")
+
+
+def _remove_old_note(old: Path | None, new: Path) -> None:
+    """Borra una nota con el nombre anterior si quedó en la misma carpeta."""
+    if old is None or old == new:
+        return
+    try:
+        if old.parent == new.parent and old.suffix.lower() == ".md" and old.is_file():
+            old.unlink()
+    except OSError:
+        pass
+
+
+def _write_note(
+    *,
+    item: Item,
+    course_name: str,
+    item_dir: Path,
+    output_root: Path,
+    manifest: Manifest,
+    used_names: dict[Path, set[str]],
+    options: SyncOptions,
+    result: SyncResult,
+    reporter: Reporter,
+) -> None:
+    """Guarda la consigna de un ítem como nota Markdown, aunque no tenga adjuntos."""
+    if item.kind not in NOTE_KINDS:
+        return
+
+    key = f"note:{item.kind}:{item.item_id}"
+    content = _note_text(item, course_name)
+    entry = manifest.get(key)
+    old_target = _entry_path(entry, output_root)
+    target = item_dir / unique_name(
+        _note_filename(item.title), used_names.setdefault(item_dir, set())
+    )
+
+    try:
+        unchanged = target.is_file() and target.read_text(encoding="utf-8") == content
+    except OSError:
+        unchanged = False
+
+    if unchanged:
+        if old_target != target:
+            manifest.record(
+                key,
+                ManifestEntry(
+                    path=_relative(target, output_root),
+                    size=len(content.encode("utf-8")),
+                    title=item.title,
+                ),
+            )
+            _remove_old_note(old_target, target)
+        return
+
+    if options.dry_run:
+        result.notes += 1
+        reporter.info(f"[dry-run] escribiría {_relative(target, output_root)}")
+        return
+
+    try:
+        _atomic_write_text(target, content)
+    except OSError as exc:
+        result.errors.append((item.title, str(exc)))
+        reporter.error(f"No pude guardar la nota de {item.title}: {exc}")
+        return
+
+    result.notes += 1
+    manifest.record(
+        key,
+        ManifestEntry(
+            path=_relative(target, output_root),
+            size=len(content.encode("utf-8")),
+            title=item.title,
+        ),
+    )
+    _remove_old_note(old_target, target)
+
+
 def _run_downloads(
     tasks: list[_Task],
     downloader: Downloader,
@@ -253,6 +423,8 @@ def _run_downloads(
     progress: DownloadProgress | None = None,
 ) -> None:
     jobs = max(1, min(options.jobs, 8))
+    total = len(tasks)
+    done = 0
     with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="dl") as pool:
         futures = {
             pool.submit(
@@ -270,11 +442,14 @@ def _run_downloads(
         try:
             for future in as_completed(futures):
                 task = futures[future]
+                done += 1
                 try:
                     download: DownloadResult = future.result()
                 except Exception as exc:  # noqa: BLE001 - un archivo no tumba el sync
                     result.errors.append((task.attachment.title, str(exc)))
-                    reporter.error(f"{task.attachment.title}: {exc}")
+                    reporter.error(
+                        f"{task.attachment.title}: {exc}", done=done, total=total
+                    )
                     continue
 
                 existing = manifest.get(task.key)
@@ -298,6 +473,8 @@ def _run_downloads(
                     f"{_relative(download.path, output_root)}{suffix}",
                     size=download.size,
                     elapsed=download.elapsed,
+                    done=done,
+                    total=total,
                 )
         except KeyboardInterrupt:
             reporter.warn("Interrumpido: guardando lo descargado hasta ahora...")

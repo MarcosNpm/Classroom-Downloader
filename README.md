@@ -3,6 +3,9 @@
 CLI en Python para **descargar desde la terminal** los materiales, anuncios, tareas y tus propias entregas de Google Classroom.
 
 - Sincronización incremental: no vuelve a bajar lo que ya tienes.
+- Guarda la consigna de cada tarea, material y anuncio como nota Markdown, aunque no tenga adjuntos.
+- Indicador de carga en `courses`, `list` y `sync`, con progreso por curso y por archivo.
+- Aviso automático cuando hay una nueva versión publicada en GitHub.
 - Exporta Google Docs/Sheets/Slides a formatos reales (PDF, DOCX, XLSX…).
 - Guarda YouTube, Forms y enlaces web como `.url`, incluso si están pegados en la descripción de una tarea, material o anuncio.
 - Selección interactiva de cursos o modo script (`--all`, `--course ID`).
@@ -216,6 +219,9 @@ classroom-dl sync --all --refresh
 
 # Ver el progreso de cada descarga: archivo, tamaño, velocidad y tiempo
 classroom-dl sync --all --verbose
+
+# Solo archivos y enlaces, sin notas Markdown
+classroom-dl sync --all --no-notes
 ```
 
 Tipos disponibles para `--only`: `materiales`, `anuncios`, `tareas`, `entregas` (o sus nombres en inglés), y `all`.
@@ -238,6 +244,25 @@ classroom-dl --output /ruta/destino --jobs 4 sync --all
 classroom-dl --credentials ./client_secret.json auth
 ```
 
+### Aviso de actualizaciones
+
+Al arrancar, la app consulta la última release de GitHub como máximo una vez cada 24 horas. Si hay una versión más nueva, muestra un aviso por `stderr` sin interrumpir el comando. La consulta tiene un timeout corto y se ignora silenciosamente si no hay internet.
+
+Para desactivarlo:
+
+```bash
+classroom-dl --no-update-check sync --all
+# o de forma permanente:
+export CLASSROOM_DL_NO_UPDATE_CHECK=1
+```
+
+En instalaciones con `git`:
+
+```bash
+git pull
+.venv/bin/pip install -e .
+```
+
 ---
 
 ## 5. Cómo quedan los archivos
@@ -257,7 +282,8 @@ Destino por defecto: `~/Classroom` (configurable).
     ├── Tareas/
     │   └── 2026-03-15 - Taller 1/
     │       ├── enunciado.pdf
-    │       └── datos.xlsx
+    │       ├── datos.xlsx
+    │       └── Taller 1.md
     ├── Mis entregas/
     │   └── 2026-03-15 - Taller 1/
     │       └── mi_entrega.zip
@@ -268,6 +294,7 @@ Destino por defecto: `~/Classroom` (configurable).
 ```
 
 - Los nombres se sanean (sin `/ \ : * ? " < > |`) y se truncan.
+- Cada tarea, material y anuncio genera una nota con el nombre del ítem (`Taller 1.md`, `Guía.md`, etc.) y la consigna, la fecha, el estado y el enlace a Classroom. Así los ítems sin adjuntos no se pierden. Se desactiva con `--no-notes`.
 - Si dos archivos se llaman igual en la misma carpeta: `archivo (2).pdf`.
 - Los Google Docs se exportan a PDF por defecto; Sheets a XLSX. Se cambia con `config` o con `--docs-format` / `--sheets-format`.
 - Los formularios, Sites o scripts de Apps no son archivos descargables: se guardan como `.url`.
@@ -285,6 +312,7 @@ Cada curso tiene un manifest en:
 Ahí se registra cada archivo descargado (ruta, `modifiedTime`, tamaño).
 
 - Si el archivo ya está en el manifest **y existe en disco**, se omite.
+- Las notas Markdown se reescriben solo si cambió la consigna o el estado del ítem.
 - Si borraste el archivo a mano, se vuelve a descargar.
 - `--refresh` consulta Drive y actualiza solo los archivos cuyo `modifiedTime` cambió.
 - `--prune` olvida del manifest los archivos que ya no están en disco (no borra nada).
@@ -314,6 +342,7 @@ Recuerda reautorizar cada 7 días si la app sigue en modo *Testing*.
 | Los PDFs de Docs salen vacíos | El documento es muy grande o no es exportable; prueba `--docs-format docx`. |
 | `No hay cursos para mostrar` | La cuenta no es alumno en ningún curso activo (prueba `--teacher`). |
 | `Scope has changed from ... to ...` | Google no concedió todos los permisos. En **Google Auth Platform → Acceso a los datos** agrega el scope que falta (normalmente `classroom.coursework.me.readonly`) y repite `classroom-dl auth --force`. En la pantalla de consentimiento deja **todas** las casillas marcadas. |
+| `... no concedió todos los permisos: classroom.coursework.me.readonly` | Comportamiento conocido de Google ([issue 78592659](https://issuetracker.google.com/issues/78592659)): a veces concede `classroom.student-submissions.me.readonly`, que es equivalente. Desde la versión **0.3.1** la app lo acepta automáticamente; si sigues viendo el error, actualiza con `pip install -e .` y repite `classroom-dl auth --force`. |
 | «Google no ha verificado esta aplicación» | Normal en modo Testing: **Configuración avanzada → Ir a classroom-dl (no seguro)**. |
 | La cuenta institucional bloquea la app | Un administrador de Workspace puede restringir apps de terceros. Usa una cuenta personal o pide autorización al admin. |
 
@@ -341,7 +370,8 @@ classroom_dl/
 ├── progress.py # protocolo de progreso de descargas
 ├── state.py    # manifest incremental
 ├── paths.py    # nombres y carpetas seguras
-├── ui.py       # tablas rich y selección interactiva
+├── ui.py       # tablas rich, spinners y selección interactiva
+├── update.py   # aviso de nuevas versiones en GitHub
 └── config.py   # configuración y rutas XDG
 ```
 
@@ -351,5 +381,5 @@ classroom_dl/
 
 - Descarga únicamente contenido al que **tu cuenta ya tiene acceso**. No evade permisos ni restricciones de Drive.
 - No descarga los archivos entregados por otros compañeros (la API no lo permite con scopes de alumno).
-- No sincroniza comentarios, calificaciones ni rúbricas (solo adjuntos y enlaces).
+- No sincroniza comentarios, calificaciones ni rúbricas (solo adjuntos, enlaces y la consigna en Markdown).
 - Respeta los Términos de Servicio de Google y las normas de tu institución.

@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import __version__
-from .api import ClassroomClient, Course, parse_kinds
+from .api import ClassroomClient, Course, Item, parse_kinds
 from .auth import SCOPES, credentials_path, describe_token, load_credentials
 from .config import DOCS_FORMATS, SHEETS_FORMATS, Config, config_dir, state_dir
 from .drive import DriveDownloader
@@ -25,6 +25,7 @@ from .errors import AuthError, ClassroomDLError
 from .state import Manifest, list_manifests
 from .sync import SyncOptions, SyncResult, sync_course
 from .ui import (
+    LoadingStatus,
     RichDownloadProgress,
     RichReporter,
     courses_table,
@@ -32,6 +33,7 @@ from .ui import (
     pick_courses,
     results_table,
 )
+from .update import check_for_update
 
 app = typer.Typer(
     name="classroom-dl",
@@ -86,6 +88,19 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _notify_update() -> None:
+    """Muestra un aviso si hay una versión más nueva. Nunca falla."""
+    try:
+        info = check_for_update(__version__)
+    except Exception:  # noqa: BLE001 - un aviso no debe romper el comando
+        return
+    if info is not None:
+        err_console.print(
+            f"[yellow]Nueva versión disponible:[/] {info.latest} (tienes {info.current})"
+        )
+        err_console.print(f"[dim]{info.url}[/]")
+
+
 @app.callback()
 def root(
     ctx: typer.Context,
@@ -113,6 +128,11 @@ def root(
     jobs: int | None = typer.Option(
         None, "--jobs", "-j", min=1, max=8, help="Descargas en paralelo (1-8)."
     ),
+    no_update_check: bool = typer.Option(
+        False,
+        "--no-update-check",
+        help="No buscar nuevas versiones del proyecto.",
+    ),
 ) -> None:
     """Opciones globales; también se pueden guardar con `classroom-dl config`."""
     _validate_formats(docs_format, sheets_format)
@@ -130,6 +150,8 @@ def root(
     if jobs is not None:
         config.jobs = jobs
     ctx.obj = config
+    if not no_update_check:
+        _notify_update()
 
 
 # ---------------------------------------------------------------------- auth
@@ -183,7 +205,8 @@ def courses(
     _, client = _connect(config)
     role = "all" if teacher else "student"
     try:
-        found = client.courses(role=role, include_archived=include_archived)
+        with LoadingStatus(err_console, "Consultando cursos en Classroom…"):
+            found = client.courses(role=role, include_archived=include_archived)
     except HttpError as exc:
         _fail(f"Google rechazó la petición: {exc}")
     except ClassroomDLError as exc:
@@ -218,10 +241,16 @@ def list_items(
         kinds = parse_kinds(only)
         course_id = course
         if not course_id:
-            found = client.courses(role="all" if teacher else "student")
+            with LoadingStatus(err_console, "Consultando tus cursos…"):
+                found = client.courses(role="all" if teacher else "student")
             course_id = pick_courses(found, single=True)
-        selected = client.get_course(course_id)
-        items = list(client.items(selected.id, kinds, since=_parse_since(since)))
+        with LoadingStatus(err_console, "Leyendo contenidos del curso…") as status:
+            selected = client.get_course(course_id)
+            status.update(f"Leyendo contenidos de {selected.name}…")
+            items: list[Item] = []
+            for item in client.items(selected.id, kinds, since=_parse_since(since)):
+                items.append(item)
+                status.update(f"Leyendo contenidos de {selected.name}… {len(items)} elementos")
     except ClassroomDLError as exc:
         _fail(str(exc))
     except HttpError as exc:
@@ -264,6 +293,11 @@ def sync(
     ),
     since: str | None = typer.Option(None, "--since", help="Solo contenidos desde AAAA-MM-DD."),
     no_links: bool = typer.Option(False, "--no-links", help="No guarda enlaces como .url."),
+    notes: bool = typer.Option(
+        True,
+        "--notes/--no-notes",
+        help="Guarda la consigna de cada ítem como nota Markdown.",
+    ),
     prune: bool = typer.Option(
         False, "--prune", help="Olvida del manifest los archivos que ya no están en disco."
     ),
@@ -288,7 +322,8 @@ def sync(
     progress = RichDownloadProgress(console) if verbose else None
 
     try:
-        available = client.courses(role="all" if teacher else "student")
+        with LoadingStatus(err_console, "Consultando tus cursos…"):
+            available = client.courses(role="all" if teacher else "student")
     except HttpError as exc:
         _fail(f"Google rechazó la petición: {exc}")
     except ClassroomDLError as exc:
@@ -297,7 +332,10 @@ def sync(
     try:
         selected: list[Course]
         if course:
-            selected = [client.get_course(course_id) for course_id in course]
+            selected = []
+            for course_id in course:
+                with LoadingStatus(err_console, f"Abriendo curso {course_id}…"):
+                    selected.append(client.get_course(course_id))
         elif all_courses:
             selected = available
         else:
@@ -324,6 +362,7 @@ def sync(
         jobs=config.jobs,
         links=not no_links,
         prune=prune,
+        notes=notes,
     )
 
     results: list[SyncResult] = []
@@ -335,25 +374,30 @@ def sync(
     console.print(f"[bold]Cursos:[/] {len(selected)} · [bold]Tipos:[/] {', '.join(kinds)}")
 
     try:
-        for selected_course in selected:
+        total_courses = len(selected)
+        for index, selected_course in enumerate(selected, start=1):
             console.print(
                 f"\n[bold cyan]{selected_course.name}[/]"
                 + (f" — {selected_course.section}" if selected_course.section else "")
-                + f" [dim]({selected_course.id})[/]"
+                + f" [dim](curso {index}/{total_courses} · {selected_course.id})[/]"
             )
             manifest = Manifest.for_course(selected_course.id, selected_course.name)
             try:
-                result = sync_course(
-                    fetcher=client,
-                    downloader=downloader,
-                    course_id=selected_course.id,
-                    course_name=selected_course.name,
-                    output_root=output_root,
-                    manifest=manifest,
-                    options=options,
-                    reporter=reporter,
-                    progress=progress,
-                )
+                with LoadingStatus(
+                    err_console, f"Leyendo contenidos de {selected_course.name}…"
+                ) as fetch_status:
+                    result = sync_course(
+                        fetcher=client,
+                        downloader=downloader,
+                        course_id=selected_course.id,
+                        course_name=selected_course.name,
+                        output_root=output_root,
+                        manifest=manifest,
+                        options=options,
+                        reporter=reporter,
+                        progress=progress,
+                        fetch_status=fetch_status,
+                    )
             except KeyboardInterrupt:
                 raise
             except (ClassroomDLError, HttpError, OSError) as exc:
@@ -361,7 +405,11 @@ def sync(
                 reporter.error(f"Curso {selected_course.name}: {exc}")
                 continue
             results.append(result)
-            console.print(f"[green]✔[/] {result.summary()}")
+            completed_pct = index * 100 // total_courses
+            console.print(
+                f"[green]✔[/] {result.summary()} "
+                f"[dim]· cursos {index}/{total_courses} ({completed_pct}%)[/]"
+            )
             if result.errors:
                 failures += 1
     except KeyboardInterrupt:

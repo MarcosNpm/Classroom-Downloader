@@ -55,6 +55,26 @@ def test_reporter_download_without_verbose_keeps_old_output():
     assert "MB" not in output
 
 
+def test_reporter_download_shows_file_progress():
+    stream = io.StringIO()
+    reporter = ui.RichReporter(Console(file=stream, width=100))
+
+    reporter.download("Curso/archivo.pdf", done=3, total=8)
+
+    output = stream.getvalue()
+    assert "3/8 archivos (37%)" in output
+
+
+def test_loading_status_is_silent_without_terminal():
+    stream = io.StringIO()
+    console = Console(file=stream, width=100)
+
+    with ui.LoadingStatus(console, "Cargando…") as status:
+        status.update("Cargando más…")
+
+    assert stream.getvalue() == ""
+
+
 def test_progress_line_mode_shows_file_and_speed():
     stream = io.StringIO()
     progress = ui.RichDownloadProgress(Console(file=stream, width=100))

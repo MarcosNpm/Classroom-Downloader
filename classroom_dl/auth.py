@@ -24,6 +24,18 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
+# Google puede devolver un scope equivalente en lugar del solicitado.
+# Ver https://issuetracker.google.com/issues/78592659: al pedir
+# classroom.coursework.me.readonly a veces concede
+# classroom.student-submissions.me.readonly (y viceversa). Google documenta
+# ambos con la misma descripción, así que cualquiera de los dos sirve.
+_COURSEWORK = "https://www.googleapis.com/auth/classroom.coursework.me.readonly"
+_SUBMISSIONS = "https://www.googleapis.com/auth/classroom.student-submissions.me.readonly"
+EQUIVALENT_SCOPES = {
+    _COURSEWORK: {_SUBMISSIONS},
+    _SUBMISSIONS: {_COURSEWORK},
+}
+
 EXPIRED_TOKEN_HINT = (
     "El token guardado ya no es válido (en apps en modo 'Testing' Google lo caduca "
     "cada 7 días). Ejecuta: classroom-dl auth --force"
@@ -95,20 +107,22 @@ def load_credentials(
 
     client_secret = credentials_path(client_secret)
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), SCOPES)
-    try:
-        creds = flow.run_local_server(
-            port=0,
-            open_browser=True,
-            prompt="consent",
-            authorization_prompt_message="Abre este enlace para autorizar classroom-dl:\n{url}",
-            success_message="Autorización completada. Ya puedes cerrar esta pestaña.",
-        )
-    except Warning as exc:
-        # oauthlib lanza un Warning si Google concede menos scopes de los pedidos.
-        old = list(getattr(exc, "old_scope", []) or SCOPES)
-        new = set(getattr(exc, "new_scope", []) or [])
-        missing = [scope for scope in old if scope not in new]
-        raise AuthError(_scope_change_message(missing)) from exc
+
+    # oauthlib trata como error fatal cualquier diferencia entre los scopes
+    # pedidos y los concedidos. Google a veces concede un scope equivalente
+    # (ver EQUIVALENT_SCOPES), así que relajamos esa comprobación y validamos
+    # nosotros mismos lo que realmente hace falta.
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+    creds = flow.run_local_server(
+        port=0,
+        open_browser=True,
+        prompt="consent",
+        authorization_prompt_message="Abre este enlace para autorizar classroom-dl:\n{url}",
+        success_message="Autorización completada. Ya puedes cerrar esta pestaña.",
+    )
+    missing = _missing_scopes(creds.scopes)
+    if missing:
+        raise AuthError(_scope_change_message(missing))
     _save_token(creds, token_file)
     return creds
 
@@ -126,12 +140,29 @@ def _scope_change_message(missing: list[str]) -> str:
     )
 
 
+def _missing_scopes(granted: list[str] | None) -> list[str]:
+    """Scopes requeridos que no están cubiertos por los concedidos.
+
+    Un scope concedido equivalente (por ejemplo
+    ``classroom.student-submissions.me.readonly`` en lugar de
+    ``classroom.coursework.me.readonly``) cuenta como presente. Si el token no
+    declara scopes, no se puede comprobar y se confía en él.
+    """
+    granted_set = set(granted or [])
+    if not granted_set:
+        return []
+    missing = []
+    for scope in SCOPES:
+        if scope in granted_set:
+            continue
+        if EQUIVALENT_SCOPES.get(scope, set()) & granted_set:
+            continue
+        missing.append(scope)
+    return missing
+
+
 def _has_required_scopes(creds: Credentials) -> bool:
-    granted = set(creds.scopes or [])
-    if not granted:
-        # Algunos tokens no declaran scopes; no podemos verificar, confiamos.
-        return True
-    return set(SCOPES).issubset(granted)
+    return not _missing_scopes(creds.scopes)
 
 
 def _save_token(creds: Credentials, path: Path) -> None:

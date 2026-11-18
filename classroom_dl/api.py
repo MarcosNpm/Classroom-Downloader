@@ -125,6 +125,7 @@ class Item:
     files: tuple[DriveAttachment, ...] = field(default_factory=tuple)
     links: tuple[LinkAttachment, ...] = field(default_factory=tuple)
     state: str | None = None
+    url: str | None = None
 
 
 # --------------------------------------------------------------------- utilidades
@@ -520,6 +521,7 @@ class ClassroomClient:
                 files=files,
                 links=links,
                 state=raw.get("state"),
+                url=raw.get("alternateLink") or None,
             )
 
     def _announcements(self, course_id: str) -> Iterator[Item]:
@@ -547,6 +549,7 @@ class ClassroomClient:
                 files=files,
                 links=links,
                 state=raw.get("state"),
+                url=raw.get("alternateLink") or None,
             )
 
     def _coursework(self, course_id: str) -> Iterator[Item]:
@@ -574,6 +577,7 @@ class ClassroomClient:
                 files=files,
                 links=links,
                 state=raw.get("state"),
+                url=raw.get("alternateLink") or None,
             )
 
     def _submission_item(self, course_id: str, coursework: Item) -> Item | None:
@@ -618,6 +622,7 @@ class ClassroomClient:
             files=tuple(files),
             links=tuple(links),
             state=states[0] if states else None,
+            url=coursework.url,
         )
 
 
